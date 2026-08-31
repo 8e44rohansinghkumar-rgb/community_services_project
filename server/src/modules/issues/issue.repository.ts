@@ -155,7 +155,7 @@ export async function createIssue(input: CreateIssueInput, db: Executor = pool):
       input.isPublic,
     ],
   );
-  const created = await findById(rows[0]!.id, db);
+  const created = await findById(rows[0].id, db);
   if (!created) throw new Error('Issue creation failed unexpectedly');
   return created;
 }
@@ -604,7 +604,7 @@ export async function createAssignment(
      RETURNING id`,
     [input.issueId, input.workerId, input.assignedBy, input.note ?? null],
   );
-  return rows[0]!.id;
+  return rows[0].id;
 }
 
 export async function findActiveAssignment(
@@ -749,7 +749,7 @@ export async function addImage(
       input.type,
     ],
   );
-  const row = rows[0]!;
+  const row = rows[0];
   return {
     id: row.id,
     issueId: row.issue_id,
@@ -857,10 +857,10 @@ export async function addComment(
        FROM issue_comments c
        JOIN users u ON u.id = c.author_id
       WHERE c.id = $1`,
-    [rows[0]!.id],
+    [rows[0].id],
   );
 
-  const row = full[0]!;
+  const row = full[0];
   return {
     id: row.id,
     issueId: row.issue_id,

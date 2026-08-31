@@ -36,7 +36,7 @@ export async function insertRefreshToken(
       input.ipAddress ?? null,
     ],
   );
-  return rows[0]!.id;
+  return rows[0].id;
 }
 
 export async function findByHash(tokenHash: string, db: Executor = pool): Promise<RefreshTokenRow | null> {

@@ -121,7 +121,7 @@ export async function createUser(input: CreateUserInput, db: Executor = pool): P
       input.emailVerified ?? false,
     ],
   );
-  return mapUser(rows[0]!);
+  return mapUser(rows[0]);
 }
 
 export async function touchLastLogin(id: string, db: Executor = pool): Promise<void> {

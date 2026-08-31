@@ -71,26 +71,26 @@ export async function listPublic(req: Request, res: Response): Promise<void> {
 }
 
 export async function detail(req: Request, res: Response): Promise<void> {
-  const result = await issueService.getDetail(req.params.id!, req.user ?? null);
+  const result = await issueService.getDetail(req.params.id, req.user ?? null);
   sendOk(res, result);
 }
 
 export async function update(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
-  const issue = await issueService.updateIssue(req.params.id!, req.body, actor);
+  const issue = await issueService.updateIssue(req.params.id, req.body, actor);
   sendOk(res, { issue });
 }
 
 export async function remove(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
-  await issueService.deleteIssue(req.params.id!, actor, meta(req));
+  await issueService.deleteIssue(req.params.id, actor, meta(req));
   sendNoContent(res);
 }
 
 export async function changeStatus(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
   const issue = await issueService.changeStatus(
-    req.params.id!,
+    req.params.id,
     req.body.status,
     req.body.reason ?? null,
     actor,
@@ -100,14 +100,14 @@ export async function changeStatus(req: Request, res: Response): Promise<void> {
 }
 
 export async function history(req: Request, res: Response): Promise<void> {
-  const entries = await issueService.getHistory(req.params.id!, req.user ?? null);
+  const entries = await issueService.getHistory(req.params.id, req.user ?? null);
   sendOk(res, { history: entries });
 }
 
 export async function assign(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
   const issue = await issueService.assignIssue(
-    req.params.id!,
+    req.params.id,
     req.body.workerId,
     req.body.note ?? null,
     actor,
@@ -118,14 +118,14 @@ export async function assign(req: Request, res: Response): Promise<void> {
 
 export async function unassign(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
-  const issue = await issueService.unassignIssue(req.params.id!, req.params.assignmentId!, actor, meta(req));
+  const issue = await issueService.unassignIssue(req.params.id, req.params.assignmentId, actor, meta(req));
   sendOk(res, { issue });
 }
 
 export async function changePriority(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
   const issue = await issueService.changePriority(
-    req.params.id!,
+    req.params.id,
     req.body.priority,
     req.body.reason ?? null,
     actor,
@@ -136,19 +136,19 @@ export async function changePriority(req: Request, res: Response): Promise<void>
 
 export async function markSpam(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
-  const issue = await issueService.markSpam(req.params.id!, req.body.isSpam, actor, meta(req));
+  const issue = await issueService.markSpam(req.params.id, req.body.isSpam, actor, meta(req));
   sendOk(res, { issue });
 }
 
 export async function listComments(req: Request, res: Response): Promise<void> {
-  const comments = await issueService.listComments(req.params.id!, req.user ?? null);
+  const comments = await issueService.listComments(req.params.id, req.user ?? null);
   sendOk(res, { comments });
 }
 
 export async function addComment(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
   const comment = await issueService.addComment(
-    req.params.id!,
+    req.params.id,
     req.body.body,
     req.body.isInternal ?? false,
     actor,
@@ -157,7 +157,7 @@ export async function addComment(req: Request, res: Response): Promise<void> {
 }
 
 export async function listImages(req: Request, res: Response): Promise<void> {
-  const images = await issueService.listImages(req.params.id!, req.user ?? null);
+  const images = await issueService.listImages(req.params.id, req.user ?? null);
   sendOk(res, { images });
 }
 
@@ -165,7 +165,7 @@ export async function uploadImages(req: Request, res: Response): Promise<void> {
   const actor = getAuthUser(req);
   const files = uploadedFiles(req);
   if (files.length === 0) throw new ValidationError('Select at least one image to upload');
-  const images = await issueService.addImages(req.params.id!, files, req.body.type ?? 'ADDITIONAL', actor);
+  const images = await issueService.addImages(req.params.id, files, req.body.type ?? 'ADDITIONAL', actor);
   sendCreated(res, { images });
 }
 
@@ -176,8 +176,8 @@ export async function uploadImages(req: Request, res: Response): Promise<void> {
  */
 export async function downloadImage(req: Request, res: Response): Promise<void> {
   const { storageKey, mimeType } = await issueService.getImageForDownload(
-    req.params.id!,
-    req.params.imageId!,
+    req.params.id,
+    req.params.imageId,
     req.user ?? null,
   );
 

@@ -117,7 +117,7 @@ departmentRouter.patch(
       actorEmail: actor.email,
       action: audit.AUDIT_ACTIONS.DEPARTMENT_UPDATED,
       entityType: 'department',
-      entityId: req.params.id!,
+      entityId: req.params.id,
       metadata: { changes: req.body },
       ipAddress: req.ip ?? null,
     });

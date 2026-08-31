@@ -75,7 +75,7 @@ export async function overview(viewer: AuthUser, db: Executor = pool): Promise<O
     params,
   );
 
-  const row = rows[0]!;
+  const row = rows[0];
   const num = (key: string): number => Number(row[key] ?? 0);
   const maybe = (key: string): number | null =>
     row[key] === null || row[key] === undefined ? null : Math.round(Number(row[key]) * 10) / 10;

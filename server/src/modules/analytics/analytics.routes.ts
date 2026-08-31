@@ -114,10 +114,18 @@ analyticsRouter.get(
       ipAddress: req.ip ?? null,
     });
 
-    const headers = rows.length > 0 ? Object.keys(rows[0]!) : ['public_id'];
+    const headers = rows.length > 0 ? Object.keys(rows[0]) : ['public_id'];
     const escape = (value: unknown): string => {
       if (value === null || value === undefined) return '';
-      let text = value instanceof Date ? value.toISOString() : String(value);
+      // String(value) on an object yields "[object Object]", which would put
+      // silent garbage in the export rather than failing loudly.
+      let text: string;
+      if (value instanceof Date) text = value.toISOString();
+      else if (typeof value === 'object') text = JSON.stringify(value);
+      else if (typeof value === 'string') text = value;
+      else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+        text = value.toString();
+      } else text = '';
       // CSV injection guard: a leading =, +, - or @ can execute in spreadsheets.
       if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
       return `"${text.replace(/"/g, '""')}"`;

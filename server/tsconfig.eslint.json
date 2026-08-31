@@ -1,0 +1,6 @@
+{
+  "//": "Type-aware linting needs tests in a project; tsconfig.json excludes them.",
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

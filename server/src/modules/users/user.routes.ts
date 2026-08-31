@@ -131,7 +131,7 @@ userRouter.get(
   '/:id',
   validate({ params: idParams }),
   asyncHandler(async (req: Request, res: Response) => {
-    const user = await userRepo.findById(req.params.id!);
+    const user = await userRepo.findById(req.params.id);
     if (!user) throw new NotFoundError('User', 'USER_NOT_FOUND');
     sendOk(res, { user });
   }),
@@ -142,7 +142,7 @@ userRouter.patch(
   validate({ params: idParams, body: statusSchema }),
   asyncHandler(async (req: Request, res: Response) => {
     const actor = getAuthUser(req);
-    const targetId = req.params.id!;
+    const targetId = req.params.id;
     // Prevents an admin locking themselves out mid-session.
     if (targetId === actor.id) {
       throw new ValidationError('You cannot change the status of your own account');
@@ -179,7 +179,7 @@ userRouter.patch(
   validate({ params: idParams, body: roleSchema }),
   asyncHandler(async (req: Request, res: Response) => {
     const actor = getAuthUser(req);
-    const targetId = req.params.id!;
+    const targetId = req.params.id;
     // Self-demotion would leave the system potentially without an admin.
     if (targetId === actor.id) {
       throw new ValidationError('You cannot change your own role');
@@ -270,7 +270,7 @@ workerRouter.get(
   validate({ params: idParams, query: workerIssuesQuery }),
   asyncHandler(async (req: Request, res: Response) => {
     const actor = getAuthUser(req);
-    const targetId = req.params.id!;
+    const targetId = req.params.id;
     // A worker may only read their OWN queue; admins may read anyone's.
     if (actor.role === 'WORKER' && actor.id !== targetId) {
       throw new NotFoundError('Worker', 'WORKER_NOT_FOUND');

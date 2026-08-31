@@ -340,7 +340,7 @@ async function main(): Promise<void> {
         'INSERT INTO departments (name, description) VALUES ($1, $2) RETURNING id',
         [dept.name, dept.description],
       );
-      departmentIds.set(dept.name, rows[0]!.id);
+      departmentIds.set(dept.name, rows[0].id);
     }
     console.log(`  ${DEPARTMENTS.length} departments`);
 
@@ -379,7 +379,7 @@ async function main(): Promise<void> {
           user.department ? departmentIds.get(user.department) : null,
         ],
       );
-      userIds.set(user.email, rows[0]!.id);
+      userIds.set(user.email, rows[0].id);
     }
     console.log(`  ${USERS.length} users (2 admins, 4 workers, 4 citizens)`);
 
@@ -430,8 +430,8 @@ async function main(): Promise<void> {
           closedAt,
         ],
       );
-      const issueId = issueRows[0]!.id;
-      const publicId = issueRows[0]!.public_id;
+      const issueId = issueRows[0].id;
+      const publicId = issueRows[0].public_id;
 
       /* Status history: initial REPORTED plus the path to the current status */
       await client.query(
@@ -599,7 +599,7 @@ async function main(): Promise<void> {
   });
 
   const { rows } = await pool.query<{ count: string }>('SELECT COUNT(*) AS count FROM issues');
-  console.log(`\nSeed complete. ${rows[0]!.count} issues in the database.\n`);
+  console.log(`\nSeed complete. ${rows[0].count} issues in the database.\n`);
   console.log('  DEVELOPMENT credentials (all accounts share one password):');
   console.log(`    Password: ${DEV_PASSWORD}\n`);
   console.log('    Admin    admin@civicconnect.dev');

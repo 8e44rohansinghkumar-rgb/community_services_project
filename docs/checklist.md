@@ -11,6 +11,7 @@ so; a checklist that is all ticks is not a checklist.
 | Backend tests | 181 passing (8 files) |
 | Frontend tests | 78 passing (3 files) |
 | End-to-end smoke | 131 assertions passing |
+| Linting | ESLint clean, both packages (type-aware, with a11y rules on the client) |
 | Type checking | `tsc --noEmit` clean, both packages |
 | Production build | Client builds; server compiles |
 | OpenAPI drift check | 60/60 operations match the mounted routes |
@@ -29,7 +30,7 @@ so; a checklist that is all ticks is not a checklist.
 | 6 | No MongoDB, no Firebase | ✅ | Neither appears in either `package.json` |
 | 7 | `.env.example` for both packages, `.env` git-ignored | ✅ | `git ls-files` shows only `.env.example` files |
 | 8 | `.gitignore` covers modules, builds, uploads, env, logs | ✅ | Root + per-package |
-| 9 | npm scripts for dev, build, test, typecheck, lint, db | ✅ | Root `package.json` delegates to both |
+| 9 | npm scripts for dev, build, test, typecheck, lint, db | ✅ | Root `package.json` delegates to both. **Fixed late:** `lint` was declared but ESLint was never installed and no config existed, so the script failed. Both packages now have a type-aware `.eslintrc.cjs` and pass |
 | 10 | Docker Compose and Dockerfiles | ⚠️ | Written and reviewed; **not** run — no Docker in this environment. Documented as development-only |
 
 ## B. Database
@@ -124,7 +125,7 @@ so; a checklist that is all ticks is not a checklist.
 | 66 | Three role dashboards + public pages | ✅ | 6 public, 3 citizen, 3 worker, 7 admin, 4 shared |
 | 67 | Multi-step report wizard with real geolocation | ✅ | 4 steps, live duplicate check |
 | 68 | Every screen handles loading / success / empty / error | ✅ | `LoadingState`, `EmptyState`, `ErrorState` used throughout |
-| 69 | Accessibility: semantics, keyboard, labels, focus, contrast, alt text | ✅ | Covered by `components.test.tsx`; status never colour-alone |
+| 69 | Accessibility: semantics, keyboard, labels, focus, contrast, alt text | ✅ | Covered by `components.test.tsx` **and** `eslint-plugin-jsx-a11y` in the lint step — verified to still catch empty labels, missing alt text and invalid anchors. Status never colour-alone |
 | 70 | Responsive from 320 px | ✅ | Fluid grids and tokens; no fixed-width layouts |
 
 ---
@@ -150,6 +151,12 @@ Things that are **not** done, stated plainly so nobody is misled:
    image format validation and re-encoding.
 7. **No load testing.** Indexes were chosen from query shape and `EXPLAIN`, not
    from measured production traffic.
-8. **The SDG 11 impact claim is deliberately modest.** This shortens the
+8. **The database was rebuilt from scratch mid-verification.** The sandbox
+   reset removed the PostgreSQL installation (it lived outside the workspace).
+   Reinstalling, re-running all 6 migrations against an empty database, and
+   re-seeding worked first time — which is a stronger test of the documented
+   setup path than the original run was. All figures above were re-measured
+   afterwards.
+9. **The SDG 11 impact claim is deliberately modest.** This shortens the
    distance between noticing a problem and the right person knowing about it.
    It does not fill potholes.

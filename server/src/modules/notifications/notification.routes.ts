@@ -63,11 +63,11 @@ notificationRouter.patch(
   validate({ params: idParams }),
   asyncHandler(async (req: Request, res: Response) => {
     const actor = getAuthUser(req);
-    const marked = await notifications.markRead(req.params.id!, actor.id);
+    const marked = await notifications.markRead(req.params.id, actor.id);
     if (!marked) {
       // Distinguishes "already read" from "not yours / does not exist" without
       // revealing which — both return 404 for a foreign id.
-      const exists = await notifications.existsForUser(req.params.id!, actor.id);
+      const exists = await notifications.existsForUser(req.params.id, actor.id);
       if (!exists) throw new NotFoundError('Notification', 'NOTIFICATION_NOT_FOUND');
     }
     sendOk(res, { message: 'Notification marked as read' });
