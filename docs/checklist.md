@@ -13,7 +13,7 @@ so; a checklist that is all ticks is not a checklist.
 | End-to-end smoke | 131 assertions passing |
 | Linting | ESLint clean, both packages (type-aware, with a11y rules on the client) |
 | Type checking | `tsc --noEmit` clean, both packages |
-| Production build | Client builds; server compiles |
+| Production build | Client builds; server compiles **and boots** — verified `NODE_ENV=production node dist/server.js` starts, serves, and shuts down cleanly on SIGTERM |
 | OpenAPI drift check | 60/60 operations match the mounted routes |
 
 ---
@@ -49,7 +49,7 @@ so; a checklist that is all ticks is not a checklist.
 | 20 | `citizen_severity` separate from `official_priority` | ✅ | Distinct columns; the citizen cannot write the official one |
 | 21 | Enum types enforced in the database | ✅ | `user_role`, `severity`, `issue_status`, `image_type`, `notification_type` |
 | 22 | `updated_at` maintained by trigger | ✅ | `set_updated_at()` on every mutable table |
-| 23 | Seed script with documented dev credentials | ✅ | 5 departments, 10 users, 12 issues; refuses to run in production |
+| 23 | Seed script with documented dev credentials | ✅ | 5 departments, 10 users, 12 issues. The production guard was **executed**, not just read: with `NODE_ENV=production` it prints "Refusing to seed a production database" and exits 1, leaving the data untouched |
 
 ## C. Authentication and sessions
 
@@ -107,7 +107,7 @@ so; a checklist that is all ticks is not a checklist.
 
 | # | Item | Status | Evidence |
 | --- | --- | :---: | --- |
-| 56 | Helmet with an explicit configuration | ✅ | CSP, nosniff, frameguard, referrer policy, HSTS in production only |
+| 56 | Helmet with an explicit configuration | ✅ | CSP, nosniff, frameguard, referrer policy. **HSTS verified by running both modes side by side**: present with `max-age=31536000` in production, absent in development. `Secure` confirmed on cookies in production only |
 | 57 | CORS allowlist, never `*` | ✅ | Disallowed origin → 403 `ORIGIN_NOT_ALLOWED` before `cors()` runs |
 | 58 | Tiered rate limiting | ✅ | 8 limiters by traffic class |
 | 59 | Documented CSRF strategy | ✅ | Three layers; the code states why *"CORS prevents CSRF"* is false |
@@ -129,6 +129,22 @@ so; a checklist that is all ticks is not a checklist.
 | 70 | Responsive from 320 px | ✅ | Fluid grids and tokens; no fixed-width layouts |
 
 ---
+
+## Verified by execution, not inspection
+
+These were run rather than read, because "it compiles" and "it runs" are
+different claims:
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Server compiles | `npm run build` | 49 JS files emitted, exit 0 |
+| Compiled server boots | `NODE_ENV=production node dist/server.js` | Listens, logs structured JSON, graceful SIGTERM shutdown |
+| Production headers differ | `curl` against both modes | HSTS + `Secure` cookies in production; absent in development |
+| Errors leak nothing in production | `curl /api/nope`, over-limit query | Clean envelope with `requestId`; no stack, path or SQL |
+| Seed refuses in production | `NODE_ENV=production tsx src/db/seed.ts` | Exits 1, data untouched |
+| Migrations work on an empty DB | Full rebuild after the sandbox reset | 6 migrations + seed, first time |
+| a11y lint rules still bite | Deliberately broken component | Caught empty label, missing alt, invalid anchor |
+| OpenAPI drift check fails on drift | Removed a path, re-ran | Exited 1 and named the missing operation |
 
 ## Explicit non-claims
 
