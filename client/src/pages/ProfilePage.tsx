@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { api, ApiError } from '@/api/client';
+import { passwordPolicyError } from '@/utils/password';
 import { Alert, Field, fieldAria } from '@/components/ui';
 import { ROLE_LABEL, formatDateTime } from '@/utils/format';
 
@@ -62,7 +63,8 @@ export function ProfilePage(): JSX.Element {
 
     const next: Record<string, string> = {};
     if (!passwords.current) next.current = 'Enter your current password';
-    if (passwords.next.length < 10) next.next = 'The new password must be at least 10 characters';
+    const policyProblem = passwordPolicyError(passwords.next);
+    if (policyProblem) next.next = policyProblem;
     if (passwords.next !== passwords.confirm) next.confirm = 'The passwords do not match';
     if (Object.keys(next).length > 0) {
       setPasswordErrors(next);
@@ -176,9 +178,9 @@ export function ProfilePage(): JSX.Element {
             onChange={(event) => setPasswords({ ...passwords, current: event.target.value })}
           />
         </Field>
-        <Field label="New password" htmlFor="pw-next" required error={passwordErrors.next} hint="At least 10 characters, and not similar to your email address.">
+        <Field label="New password" htmlFor="pw-next" required error={passwordErrors.next} hint="At least 12 characters, mixed case, a digit and a symbol. Not similar to your email address.">
           <input
-            {...fieldAria('pw-next', passwordErrors.next, 'At least 10 characters')}
+            {...fieldAria('pw-next', passwordErrors.next, 'At least 12 characters, mixed case, a digit and a symbol')}
             className="input"
             type="password"
             autoComplete="new-password"

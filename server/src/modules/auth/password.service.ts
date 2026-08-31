@@ -47,21 +47,51 @@ export async function verifyDummyPassword(plain: string): Promise<void> {
 
 /**
  * Password policy: reasonable, not absurd (spec §11). Length is the dominant
- * factor, so we require 10+ characters and block the most common passwords
+ * factor, so length is weighted most heavily. A small amount of character
+ * variety is still required — a 12-character all-lowercase phrase turns up in
+ * wordlists — but the emphasis is on length plus a common-password blocklist
  * rather than demanding unmemorable symbol soup.
+ *
+ * This function is the SINGLE SOURCE OF TRUTH for the policy. The Zod schema in
+ * auth.validators.ts delegates to it, and client/src/utils/password.ts mirrors
+ * the structural rules for instant feedback only.
+ */
+export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MAX_LENGTH = 128;
+/**
+ * A short blocklist of passwords that pass the structural rules but are on
+ * every cracking wordlist. This is not a substitute for a full breached-password
+ * check (Have I Been Pwned's k-anonymity API would be the real answer, and is
+ * listed as a hardening step) — it just catches the handful of patterns people
+ * reach for first when told "must contain a symbol and a digit".
+ *
+ * Compared case-insensitively, so `Password123!` and `password123!` both match.
  */
 const COMMON_PASSWORDS = new Set([
-  'password', 'password1', 'password123', '12345678', '123456789', '1234567890',
-  'qwerty123', 'qwertyuiop', 'letmein123', 'welcome123', 'admin123', 'iloveyou',
-  'password!', 'passw0rd', 'p@ssw0rd', 'changeme', 'civic1234', 'abcd1234',
+  'password', 'password1', 'password123', 'password123!', 'password1234',
+  'password@123', 'p@ssword123', '12345678', '123456789', '1234567890',
+  'qwerty123', 'qwertyuiop', 'qwerty123!', 'letmein123', 'letmein123!',
+  'welcome123', 'welcome123!', 'admin123', 'admin123!', 'administrator',
+  'iloveyou', 'password!', 'passw0rd', 'passw0rd!', 'p@ssw0rd', 'p@ssw0rd!',
+  'changeme', 'changeme123', 'civic1234', 'abcd1234', 'abcd1234!',
+  'aaaaaaaaaaaa', 'qazwsxedc123', 'zaq12wsx!', 'trustno1!', 'monkey123!',
+  'football123', 'baseball123', 'sunshine123', 'princess123', 'dragon123!',
 ]);
 
 export function passwordPolicyIssues(password: string, email?: string): string[] {
   const issues: string[] = [];
-  if (password.length < 10) issues.push('Password must be at least 10 characters long');
-  if (password.length > 128) issues.push('Password must be at most 128 characters long');
-  if (!/[a-zA-Z]/.test(password)) issues.push('Password must contain at least one letter');
-  if (!/[0-9]/.test(password)) issues.push('Password must contain at least one number');
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    issues.push(`Password must be at least ${PASSWORD_MIN_LENGTH} characters long`);
+  }
+  // Not cosmetic: Argon2id cost grows with input length, so an unbounded field
+  // is a cheap denial-of-service vector.
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    issues.push(`Password must be at most ${PASSWORD_MAX_LENGTH} characters long`);
+  }
+  if (!/[a-z]/.test(password)) issues.push('Password must include a lower-case letter');
+  if (!/[A-Z]/.test(password)) issues.push('Password must include an upper-case letter');
+  if (!/[0-9]/.test(password)) issues.push('Password must include a digit');
+  if (!/[^A-Za-z0-9]/.test(password)) issues.push('Password must include a symbol');
   if (COMMON_PASSWORDS.has(password.toLowerCase())) {
     issues.push('This password is too common — please choose something less predictable');
   }

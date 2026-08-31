@@ -490,6 +490,7 @@ The full list, with reasoning, is at the end of
 | [docs/openapi.yaml](docs/openapi.yaml) | OpenAPI 3.0 specification, 60 operations |
 | [docs/security.md](docs/security.md) | Threat model, every control, OWASP Top 10 review, known limitations |
 | [docs/user-flows.md](docs/user-flows.md) | Role journeys, sequence and state diagrams, accessibility notes |
+| [docs/checklist.md](docs/checklist.md) | Point-by-point verification of all 70 requirements, with evidence and explicit non-claims |
 
 ---
 

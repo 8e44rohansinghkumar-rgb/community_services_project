@@ -53,8 +53,19 @@ an attacker, low enough that a modest municipal server can still authenticate
 users without falling over.
 
 Passwords must be at least 12 characters with upper case, lower case, a digit
-and a symbol. Length is weighted over exotic composition rules, because
-composition rules mostly produce `Password1!`.
+and a symbol, and are checked against a blocklist of common choices. Length is
+weighted most heavily, because composition rules on their own mostly produce
+`Password1!` — which is exactly why that string and its neighbours are on the
+blocklist. The policy lives in one function (`passwordPolicyIssues`); the Zod
+schema delegates to it and the client mirrors the structural rules for instant
+feedback only.
+
+The 128-character ceiling is not cosmetic: Argon2id cost grows with input
+length, so an unbounded password field is a cheap denial-of-service vector.
+
+*Gap: the blocklist is a short hand-written list. A real deployment should check
+against the Have I Been Pwned range API, which uses k-anonymity so the password
+never leaves the server in a recoverable form.*
 
 ### No user enumeration
 
@@ -405,7 +416,8 @@ not a deployment artefact.
 9. Commission a penetration test. This document is a design review by the
    author of the code, which is not the same thing.
 
-**Accepted for now:** no field-level encryption for phone numbers; no
+**Accepted for now:** the common-password blocklist is hand-written rather than
+a breached-password API; no field-level encryption for phone numbers; no
 per-account lockout after repeated failures (rate limiting is per-IP, so a
 distributed attacker gets more attempts than they should); no CAPTCHA on
 registration; no virus scanning of uploads beyond format validation and

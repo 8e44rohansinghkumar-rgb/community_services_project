@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { ApiError } from '@/api/client';
 import { Alert, EmptyState, ErrorState, Field, LoadingState, Modal, Pagination, fieldAria } from '@/components/ui';
 import { ROLE_LABEL, formatDateTime, relativeTime } from '@/utils/format';
+import { passwordPolicyError } from '@/utils/password';
 import type { UserRole } from '@/types';
 
 export function UsersPage(): JSX.Element {
@@ -36,7 +37,8 @@ export function UsersPage(): JSX.Element {
     const next: Record<string, string> = {};
     if (form.name.trim().length < 2) next.name = 'Enter the full name';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) next.email = 'Enter a valid email address';
-    if (form.password.length < 10) next.password = 'Password must be at least 10 characters';
+    const passwordProblem = passwordPolicyError(form.password);
+    if (passwordProblem) next.password = passwordProblem;
     if (Object.keys(next).length > 0) {
       setErrors(next);
       return;
@@ -247,9 +249,9 @@ export function UsersPage(): JSX.Element {
             <input {...fieldAria('staff-email', errors.email)} className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </Field>
 
-          <Field label="Temporary password" htmlFor="staff-password" required error={errors.password} hint="At least 10 characters. Must not contain the email address.">
+          <Field label="Temporary password" htmlFor="staff-password" required error={errors.password} hint="At least 12 characters, mixed case, a digit and a symbol. Must not contain the email address.">
             <input
-              {...fieldAria('staff-password', errors.password, 'At least 10 characters')}
+              {...fieldAria('staff-password', errors.password, 'At least 12 characters, mixed case, a digit and a symbol')}
               className="input"
               type="text"
               value={form.password}

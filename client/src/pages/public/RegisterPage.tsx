@@ -3,22 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { ApiError } from '@/api/client';
 import { Alert, Field, fieldAria } from '@/components/ui';
-
-/** Mirrors the server rule (min 10 chars) and adds guidance, not extra rules. */
-function passwordStrength(password: string): { score: number; label: string; tone: string } {
-  let score = 0;
-  if (password.length >= 10) score += 1;
-  if (password.length >= 14) score += 1;
-  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
-  if (/\d/.test(password)) score += 1;
-  if (/[^A-Za-z0-9]/.test(password)) score += 1;
-
-  if (password.length === 0) return { score: 0, label: '', tone: 'var(--ink-300)' };
-  if (score <= 2) return { score, label: 'Weak', tone: 'var(--danger-700)' };
-  if (score === 3) return { score, label: 'Fair', tone: 'var(--warning-700)' };
-  if (score === 4) return { score, label: 'Good', tone: 'var(--info-700)' };
-  return { score, label: 'Strong', tone: 'var(--success-700)' };
-}
+import { passwordPolicyError, passwordStrength } from '@/utils/password';
 
 export function RegisterPage(): JSX.Element {
   const { register } = useAuth();
@@ -42,7 +27,8 @@ export function RegisterPage(): JSX.Element {
     if (form.phone.trim() && !/^[0-9+][0-9 ()-]{6,19}$/.test(form.phone.trim())) {
       next.phone = 'Enter a valid phone number, or leave this blank';
     }
-    if (form.password.length < 10) next.password = 'Password must be at least 10 characters long';
+    const passwordProblem = passwordPolicyError(form.password);
+    if (passwordProblem) next.password = passwordProblem;
     if (form.confirm !== form.password) next.confirm = 'Passwords do not match';
     return next;
   };
@@ -130,10 +116,10 @@ export function RegisterPage(): JSX.Element {
             />
           </Field>
 
-          <Field label="Password" htmlFor="password" required error={errors.password} hint="At least 10 characters. A short phrase works well.">
+          <Field label="Password" htmlFor="password" required error={errors.password} hint="At least 12 characters with a mix of upper case, lower case, a digit and a symbol.">
             <div style={{ position: 'relative' }}>
               <input
-                {...fieldAria('password', errors.password, 'At least 10 characters. A short phrase works well.')}
+                {...fieldAria('password', errors.password, 'At least 12 characters with a mix of upper case, lower case, a digit and a symbol.')}
                 className="input"
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="new-password"

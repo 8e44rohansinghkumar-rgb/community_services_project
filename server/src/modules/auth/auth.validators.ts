@@ -4,6 +4,7 @@
  * as posting `role: "ADMIN"` to the registration endpoint.
  */
 import { z } from 'zod';
+import { PASSWORD_MAX_LENGTH, passwordPolicyIssues } from './password.service';
 
 export const emailSchema = z
   .string()
@@ -13,10 +14,22 @@ export const emailSchema = z
   .email('Enter a valid email address')
   .transform((v) => v.toLowerCase());
 
+/**
+ * Password policy.
+ *
+ * Delegates to `passwordPolicyIssues` in password.service.ts so there is one
+ * definition rather than two that can drift. That function additionally blocks
+ * common passwords; the email-similarity check needs the email and so runs in
+ * the service layer where both fields are available.
+ */
 export const passwordSchema = z
   .string()
-  .min(10, 'Password must be at least 10 characters long')
-  .max(128, 'Password must be at most 128 characters long');
+  .max(PASSWORD_MAX_LENGTH, `Password must be at most ${PASSWORD_MAX_LENGTH} characters long`)
+  .superRefine((value, ctx) => {
+    for (const issue of passwordPolicyIssues(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue });
+    }
+  });
 
 export const nameSchema = z
   .string()

@@ -66,6 +66,35 @@ describe('POST /api/auth/register', () => {
     expect(response.body.error.code).toBe('EMAIL_ALREADY_REGISTERED');
   });
 
+  it('rejects a password that fails the composition rules', async () => {
+    const session = new Session();
+    await session.bootstrapCsrf();
+
+    // Long enough, but all lower case with no digit or symbol.
+    const response = await session.post('/api/auth/register').send({
+      name: 'Composition Test',
+      email: `composition.${RUN_ID}@test.local`,
+      password: 'alllowercaseletters',
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a common password even when it satisfies the pattern', async () => {
+    const session = new Session();
+    await session.bootstrapCsrf();
+
+    const response = await session.post('/api/auth/register').send({
+      name: 'Common Password',
+      email: `common.${RUN_ID}@test.local`,
+      password: 'Password123!',
+    });
+
+    // 12 chars, mixed case, digit, symbol — and still on every wordlist.
+    expect(response.status).toBe(400);
+  });
+
   it('rejects a password below the minimum length', async () => {
     const session = new Session();
     await session.bootstrapCsrf();
