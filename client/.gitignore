@@ -1,0 +1,18 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+
+# Vite exposes every VITE_* variable to the browser bundle, so this file must
+# never contain a secret. It is still ignored to keep per-developer overrides
+# out of version control.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+coverage/
+.vite/
+*.log
+.DS_Store

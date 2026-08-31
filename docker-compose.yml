@@ -1,0 +1,119 @@
+# ---------------------------------------------------------------------------
+# DEVELOPMENT compose file.
+#
+# This is a convenience for getting a database and the two services running on
+# a fresh machine. It is NOT a production deployment:
+#
+#   * credentials are weak and committed to the repository
+#   * there is no TLS anywhere
+#   * there are no resource limits, health-based restarts or backups
+#   * the API runs in watch mode with source mounted from the host
+#
+# See the "Deployment notes" section of README.md and the "Known limitations"
+# section of docs/security.md for what a real deployment additionally needs.
+#
+# Usage:
+#   docker compose up -d db          # just PostgreSQL, run the apps on the host
+#   docker compose up                # everything
+#   docker compose exec api npm run db:migrate
+#   docker compose exec api npm run db:seed
+# ---------------------------------------------------------------------------
+
+name: civic-connect
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: civic-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: civic
+      POSTGRES_PASSWORD: civic_dev_password
+      POSTGRES_DB: civic
+      # Deterministic collation so ORDER BY behaves identically for everyone.
+      POSTGRES_INITDB_ARGS: '--locale=C --encoding=UTF8'
+    ports:
+      # Exposed so you can run the API on the host against this database, and
+      # connect with psql. Bound to localhost only — do not change to 0.0.0.0.
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      # The API waits for this; without it the first migration races the server.
+      test: ['CMD-SHELL', 'pg_isready -U civic -d civic']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      # Repo root, not ./server: the image needs docs/openapi.yaml as well, and
+      # a build context cannot reach above itself.
+      context: .
+      dockerfile: server/Dockerfile
+      target: development
+    container_name: civic-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: '4000'
+      APP_URL: http://localhost:5173
+      # 'db' is the compose service name; inside the network it resolves to the
+      # container, not to localhost.
+      DATABASE_URL: postgresql://civic:civic_dev_password@db:5432/civic
+      DATABASE_POOL_MAX: '10'
+      DATABASE_SSL: 'false'
+      CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173
+      # Dev-only placeholders. Generate real values for anything real:
+      #   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      JWT_SECRET: dev-only-jwt-secret-change-me-0123456789abcdef0123456789abcdef
+      COOKIE_SECRET: dev-only-cookie-secret-change-me-fedcba9876543210fedcba987654
+      ACCESS_TOKEN_TTL_MINUTES: '15'
+      REFRESH_TOKEN_TTL_DAYS: '30'
+      UPLOAD_DIR: /app/var/uploads
+      MAX_FILE_SIZE: '5242880'
+      MAX_FILES_PER_ISSUE: '5'
+      LOG_LEVEL: debug
+      DUPLICATE_RADIUS_METERS: '150'
+      DUPLICATE_WINDOW_DAYS: '7'
+    ports:
+      - '127.0.0.1:4000:4000'
+    volumes:
+      # Source mounted for watch-mode reloads.
+      - ./server/src:/app/src:ro
+      # The OpenAPI spec is read from disk at /docs (see routes/docs.routes.ts).
+      - ./docs:/docs:ro
+      # Anonymous volume keeps the image's node_modules from being shadowed by
+      # the host's (which may have been built for a different platform).
+      - /app/node_modules
+      # Uploads persist across restarts. Note this path is OUTSIDE any directory
+      # the application serves statically — files are only readable through the
+      # authorised download route.
+      - uploads:/app/var/uploads
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      target: development
+    container_name: civic-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # The browser calls same-origin /api; Vite proxies it to the api service.
+      VITE_PROXY_TARGET: http://api:4000
+    ports:
+      - '127.0.0.1:5173:5173'
+    volumes:
+      - ./client/src:/app/src:ro
+      - ./client/index.html:/app/index.html:ro
+      - /app/node_modules
+
+volumes:
+  db-data:
+  uploads:

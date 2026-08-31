@@ -1,0 +1,1637 @@
+openapi: 3.0.3
+
+info:
+  title: Civic Connect API
+  version: 1.0.0
+  description: |
+    REST API for the Smart Civic Issue Reporting and Resolution System.
+
+    ## Authentication
+
+    Authentication is **cookie-based**. There is no bearer token and nothing is
+    ever stored in `localStorage`.
+
+    | Cookie | Contents | Flags | Path |
+    | --- | --- | --- | --- |
+    | `civic_access` | Short-lived JWT (15 min) | `HttpOnly`, `SameSite=Lax`, `Secure` in production | `/` |
+    | `civic_refresh` | Opaque 256-bit refresh token | `HttpOnly`, `SameSite=Lax`, `Secure` in production | `/api/auth` |
+    | `civic_csrf` | CSRF token (readable by JavaScript **by design**) | `SameSite=Lax`, `Secure` in production | `/` |
+
+    Clients call `POST /auth/login`, then simply keep sending cookies. When the
+    access cookie expires the API answers `401`; call `POST /auth/refresh` once
+    and replay the request. Refresh tokens rotate on every use and reuse of a
+    retired token revokes the whole family.
+
+    ## CSRF
+
+    Every state-changing request (`POST`, `PATCH`, `PUT`, `DELETE`) must send the
+    value of the `civic_csrf` cookie back in the `X-CSRF-Token` header
+    (double-submit). Bootstrap a token with `GET /auth/csrf`. The token rotates
+    on login. Requests that fail the check get `403 CSRF_TOKEN_INVALID`.
+
+    ## Response envelope
+
+    Success: `{ "success": true, "data": { ... } }`
+    Paginated: `{ "success": true, "data": [ ... ], "pagination": { ... } }`
+    Failure: `{ "success": false, "error": { "code", "message", "details?", "requestId" } }`
+
+    `code` is a stable machine-readable identifier; `message` is safe to show to
+    an end user. Stack traces, SQL text and internal paths are never returned.
+
+    ## Pagination
+
+    List endpoints accept `page` (>= 1) and `limit` (1–100, default 20 — 25 for
+    audit logs). A `limit` above the ceiling is rejected with `400`, never
+    silently clamped. Sorting uses `sortBy` from a per-endpoint whitelist and
+    `sortDir` of `asc` or `desc`.
+
+    ## Rate limiting
+    Tiered per-IP limits apply (login, registration, password reset, issue
+    creation, uploads, comments, general authenticated traffic, public traffic).
+    Exceeding a limit returns `429 RATE_LIMITED` with `RateLimit` headers.
+
+  license:
+    name: MIT
+
+servers:
+  - url: /api
+    description: Same-origin (the SPA is served behind the same reverse proxy)
+  - url: http://localhost:4000/api
+    description: Local development
+
+tags:
+  - name: Health
+  - name: Auth
+  - name: Issues
+  - name: Comments & Images
+  - name: Categories
+  - name: Departments
+  - name: Users & Workers
+  - name: Notifications
+  - name: Analytics
+  - name: Audit
+
+security:
+  - cookieAuth: []
+  - csrfToken: []
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe (checks the database)
+      security: []
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: The database is unreachable.
+
+  /auth/csrf:
+    get:
+      tags: [Auth]
+      summary: Bootstrap a CSRF token
+      description: |
+        Safe (`GET`) and therefore exempt from the CSRF check itself, which
+        resolves the chicken-and-egg problem of needing a token to log in.
+        Sets the `civic_csrf` cookie and echoes the value.
+      security: []
+      responses:
+        '200':
+          description: Token issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      csrfToken: { type: string }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a citizen account
+      description: |
+        Always creates a `CITIZEN`. Staff accounts are created by an
+        administrator through `POST /users`; the role can never be
+        self-selected. Signing in is automatic on success.
+      security:
+        - csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 120 }
+                email: { type: string, format: email }
+                password:
+                  type: string
+                  minLength: 12
+                  description: Minimum 12 characters with upper, lower, digit and symbol.
+                phone: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Account created and signed in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: '`EMAIL_ALREADY_REGISTERED`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      description: |
+        On success sets the access, refresh and CSRF cookies. The CSRF token is
+        **rotated** here to prevent session-fixation of the CSRF value.
+        Failures are deliberately uniform (`INVALID_CREDENTIALS`) so the
+        endpoint cannot be used to enumerate registered addresses.
+      security:
+        - csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: '`INVALID_CREDENTIALS` — identical for an unknown address and a wrong password.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: '`ACCOUNT_DISABLED`'
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate the session
+      description: |
+        Exchanges the refresh cookie for a new access cookie and a **new**
+        refresh token. Presenting an already-rotated token is treated as theft:
+        the entire token family is revoked immediately.
+      security:
+        - csrfToken: []
+      responses:
+        '200':
+          description: Session refreshed.
+        '401':
+          description: '`REFRESH_TOKEN_INVALID` — missing, expired, revoked or reused.'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out of this device
+      responses:
+        '200': { description: Cookies cleared and this refresh token revoked. }
+
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      summary: Sign out of every device
+      description: Bumps `token_version`, which invalidates every outstanding access token.
+      responses:
+        '200': { description: All sessions revoked. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        '200':
+          description: The signed-in user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    patch:
+      tags: [Auth]
+      summary: Update your own profile
+      description: At least one field must be supplied. Email and role cannot be changed here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string, minLength: 2, maxLength: 120 }
+                phone: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Profile updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change your password
+      description: Requires the current password and revokes every other session on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12 }
+      responses:
+        '200': { description: Password changed; other sessions signed out. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { description: '`INVALID_CREDENTIALS` — the current password was wrong.' }
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password reset
+      description: |
+        Always returns `200` whether or not the address exists, so the endpoint
+        cannot enumerate accounts. In development the reset link is written to
+        the server log instead of being emailed.
+      security:
+        - csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { description: Accepted (whether or not the address is registered). }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Complete a password reset
+      security:
+        - csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 12 }
+      responses:
+        '200': { description: Password reset; all sessions revoked. }
+        '400': { description: '`RESET_TOKEN_INVALID` — unknown, expired or already used.' }
+
+  /issues:
+    get:
+      tags: [Issues]
+      summary: List issues visible to the caller
+      description: |
+        Scope depends on role: a **citizen** sees only their own reports, a
+        **worker** sees issues assigned to them, an **admin** sees everything.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: One or more statuses, comma-separated.
+          schema: { type: string, example: REPORTED,UNDER_REVIEW }
+        - name: categoryId
+          in: query
+          schema: { type: integer }
+        - name: priority
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: search
+          in: query
+          description: Full-text search over title and description.
+          schema: { type: string, maxLength: 200 }
+        - name: onlyOpen
+          in: query
+          schema: { type: boolean }
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [createdAt, updatedAt, priority, status, title, resolvedAt]
+            default: createdAt
+        - name: sortDir
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: A page of issues.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedIssues'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+    post:
+      tags: [Issues]
+      summary: Report an issue
+      description: |
+        `multipart/form-data` so photographs can be attached in the same
+        request. The official priority is calculated server-side; a
+        client-supplied priority is rejected.
+
+        The response includes `potentialDuplicates` — nearby recent reports in
+        the same category — so the UI can offer to follow an existing report
+        instead. An **identical** resubmission by the same reporter within a few
+        minutes is refused with `DUPLICATE_SUBMISSION`.
+      security:
+        - cookieAuth: []
+        - csrfToken: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, description, categoryId, latitude, longitude]
+              properties:
+                title: { type: string, minLength: 8, maxLength: 160 }
+                description: { type: string, minLength: 20, maxLength: 4000 }
+                categoryId: { type: integer }
+                citizenSeverity:
+                  allOf: [{ $ref: '#/components/schemas/Severity' }]
+                  default: MEDIUM
+                latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+                longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+                addressText: { type: string, maxLength: 300 }
+                landmark: { type: string, maxLength: 160 }
+                isPublic:
+                  type: boolean
+                  default: true
+                  description: Private issues are visible only to the reporter and staff.
+                images:
+                  type: array
+                  maxItems: 5
+                  items: { type: string, format: binary }
+      responses:
+        '201':
+          description: Issue created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      issue: { $ref: '#/components/schemas/Issue' }
+                      images:
+                        type: array
+                        items: { $ref: '#/components/schemas/IssueImage' }
+                      potentialDuplicates:
+                        type: array
+                        items: { $ref: '#/components/schemas/DuplicateCandidate' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '409': { description: '`DUPLICATE_SUBMISSION`' }
+        '413': { description: '`FILE_TOO_LARGE`' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /issues/public:
+    get:
+      tags: [Issues]
+      summary: Public issue feed
+      description: |
+        No authentication required. Returns only issues flagged public, with
+        reporter identity removed and coordinates rounded to three decimal
+        places (~110 m) so a report cannot be traced to a doorstep.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: categoryId
+          in: query
+          schema: { type: integer }
+        - name: search
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of public issues.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaginatedIssues' }
+
+  /issues/my-work:
+    get:
+      tags: [Issues]
+      summary: The calling worker's queue
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of assigned issues.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaginatedIssues' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /issues/duplicate-check:
+    get:
+      tags: [Issues]
+      summary: Look for nearby recent reports before submitting
+      description: |
+        Bounding-box prefilter plus a Haversine distance calculation in SQL — no
+        PostGIS required. Default radius 150 m over a 7-day window.
+      parameters:
+        - name: categoryId
+          in: query
+          required: true
+          schema: { type: integer }
+        - name: latitude
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: longitude
+          in: query
+          required: true
+          schema: { type: number, format: double }
+      responses:
+        '200':
+          description: Candidate duplicates, nearest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      candidates:
+                        type: array
+                        items: { $ref: '#/components/schemas/DuplicateCandidate' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /issues/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    get:
+      tags: [Issues]
+      summary: Issue detail
+      description: |
+        Returns the issue plus its images, comments, status history,
+        assignments, the transitions **this caller** may perform, and the
+        caller's access level (`ADMIN`, `OWNER`, `ASSIGNED_WORKER` or
+        `PUBLIC_VIEWER`).
+
+        A caller with no right to see the issue receives `404`, never `403`, so
+        the existence of a private report is not disclosed.
+      security: []
+      responses:
+        '200':
+          description: The issue.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Issues]
+      summary: Edit an issue
+      description: |
+        The reporter may correct the title, description or location **only while
+        the issue is still `REPORTED`**; once triage has begun the record is
+        frozen and further information goes in a comment. An admin may edit at
+        any time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                title: { type: string, minLength: 8, maxLength: 160 }
+                description: { type: string, minLength: 20, maxLength: 4000 }
+                addressText: { type: string }
+                landmark: { type: string }
+                isPublic: { type: boolean }
+      responses:
+        '200': { description: Updated. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'The issue is past triage and can no longer be edited.' }
+    delete:
+      tags: [Issues]
+      summary: Soft-delete an issue (admin)
+      description: |
+        Sets `deleted_at`. The row is retained so the audit trail and status
+        history stay intact; it disappears from every list and detail view.
+      responses:
+        '200': { description: Soft-deleted. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /issues/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    post:
+      tags: [Issues]
+      summary: Change the status
+      description: |
+        Validated against the server-side state machine. Illegal hops return
+        `409 INVALID_TRANSITION`; a repeat of the current status returns `400`.
+
+        Extra gates:
+        * `REJECTED`, `ON_HOLD` and `REOPENED` require a `reason`.
+        * `IN_PROGRESS` and `RESOLVED` may only be set by the **assigned worker**
+          (or an admin).
+        * `RESOLVED` requires at least one uploaded `RESOLUTION` image.
+
+        Entering `REOPENED`, `CLOSED` or `REJECTED` deactivates the current
+        assignment so the issue can be assigned afresh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/IssueStatus' }
+                reason: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Status changed; history, notification and audit rows written in the same transaction.
+        '400': { description: 'Missing reason, missing resolution evidence, or a no-op transition.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: '`INVALID_TRANSITION`' }
+
+  /issues/{id}/assign:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    post:
+      tags: [Issues]
+      summary: Assign to a worker (admin)
+      description: |
+        A single transaction writes the assignment, moves the status to
+        `ASSIGNED`, appends status history, notifies the worker and records an
+        audit entry. A partial unique index guarantees at most one active
+        assignment per issue; a concurrent second assignment loses with `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workerId]
+              properties:
+                workerId: { type: string, format: uuid }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        '200': { description: Assigned. }
+        '400': { description: 'The target user is not an active worker.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: '`ALREADY_ASSIGNED`' }
+
+  /issues/{id}/assignments/{assignmentId}:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+      - name: assignmentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Issues]
+      summary: Withdraw an assignment (admin)
+      responses:
+        '200': { description: Assignment deactivated and the issue returned to review. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /issues/{id}/priority:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    patch:
+      tags: [Issues]
+      summary: Override the calculated priority (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [priority]
+              properties:
+                priority: { $ref: '#/components/schemas/Severity' }
+                reason: { type: string, maxLength: 1000 }
+      responses:
+        '200': { description: Priority changed and audited. }
+        '400': { description: 'The issue already has that priority.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /issues/{id}/spam:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    patch:
+      tags: [Issues]
+      summary: Flag or unflag as spam (admin)
+      description: Spam is excluded from every public list, analytic and duplicate check.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isSpam]
+              properties:
+                isSpam: { type: boolean }
+                reason: { type: string }
+      responses:
+        '200': { description: Flag updated. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /issues/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    get:
+      tags: [Issues]
+      summary: Status timeline
+      security: []
+      responses:
+        '200':
+          description: Every status change in order, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      history:
+                        type: array
+                        items: { $ref: '#/components/schemas/StatusHistoryEntry' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /issues/{id}/comments:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    get:
+      tags: [Comments & Images]
+      summary: List comments
+      description: Internal staff notes are filtered out for citizens.
+      responses:
+        '200':
+          description: Comments, oldest first.
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Comments & Images]
+      summary: Add a comment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 2, maxLength: 2000 }
+                isInternal:
+                  type: boolean
+                  default: false
+                  description: Staff only; forced to `false` for citizens.
+      responses:
+        '201': { description: Comment added. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /issues/{id}/images:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+    get:
+      tags: [Comments & Images]
+      summary: List image metadata
+      responses:
+        '200': { description: Image records (not the bytes). }
+    post:
+      tags: [Comments & Images]
+      summary: Upload photographs
+      description: |
+        Accepts JPEG, PNG and WebP up to 5 MB each, 5 per request. Every file is
+        checked by **magic number**, not by its declared MIME type or extension,
+        then re-encoded and stripped of EXIF (which would otherwise leak the
+        photographer's GPS coordinates and device). Stored under a
+        server-generated UUID name outside the web root.
+
+        `type=RESOLUTION` marks proof-of-work and may only be uploaded by the
+        assigned worker or an admin.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [images]
+              properties:
+                type:
+                  type: string
+                  enum: [ORIGINAL, ADDITIONAL, RESOLUTION]
+                  default: ADDITIONAL
+                images:
+                  type: array
+                  maxItems: 5
+                  items: { type: string, format: binary }
+      responses:
+        '201': { description: Uploaded. }
+        '400': { description: '`INVALID_FILE_TYPE` — including a file whose contents do not match its extension.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: 'The per-issue image ceiling has been reached.' }
+        '413': { description: '`FILE_TOO_LARGE`' }
+
+  /issues/{id}/images/{imageId}:
+    parameters:
+      - $ref: '#/components/parameters/IssueId'
+      - name: imageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Comments & Images]
+      summary: Download an image
+      description: |
+        The only way to read an uploaded file. There is no static route to the
+        upload directory. The same access rules as the parent issue apply, and
+        the image id must belong to the issue in the path. Served with
+        `X-Content-Type-Options: nosniff` and a sandboxing CSP.
+      security: []
+      responses:
+        '200':
+          description: The image bytes.
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /categories:
+    get:
+      tags: [Categories]
+      summary: List issue categories
+      security: []
+      responses:
+        '200':
+          description: Active categories in display order.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      categories:
+                        type: array
+                        items: { $ref: '#/components/schemas/Category' }
+    post:
+      tags: [Categories]
+      summary: Create a category (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name: { type: string, maxLength: 80 }
+                slug: { type: string, pattern: '^[a-z0-9-]+$' }
+                description: { type: string }
+                icon: { type: string }
+                departmentId: { type: integer, nullable: true }
+                defaultSeverity:
+                  allOf: [{ $ref: '#/components/schemas/Severity' }]
+                  default: MEDIUM
+                slaHours: { type: integer, minimum: 1, maximum: 8760, default: 72 }
+                sortOrder: { type: integer, minimum: 0, maximum: 9999, default: 500 }
+      responses:
+        '201': { description: Created. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: '`CATEGORY_EXISTS`' }
+
+  /categories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    patch:
+      tags: [Categories]
+      summary: Update a category (admin)
+      description: The slug is immutable once created, because it is a stable public identifier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string }
+                description: { type: string }
+                icon: { type: string }
+                departmentId: { type: integer, nullable: true }
+                defaultSeverity: { $ref: '#/components/schemas/Severity' }
+                slaHours: { type: integer, minimum: 1, maximum: 8760 }
+                sortOrder: { type: integer }
+                isActive: { type: boolean }
+      responses:
+        '200': { description: Updated. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Categories]
+      summary: Deactivate a category (admin)
+      description: |
+        Soft delete (`is_active = false`). Categories are never hard-deleted
+        because existing issues reference them (`ON DELETE RESTRICT`).
+      responses:
+        '200': { description: Deactivated. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /departments:
+    get:
+      tags: [Departments]
+      summary: List departments (admin, worker)
+      responses:
+        '200': { description: Departments with worker and category counts. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Departments]
+      summary: Create a department (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                description: { type: string }
+      responses:
+        '201': { description: Created. }
+        '409': { description: '`DEPARTMENT_EXISTS`' }
+
+  /departments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    patch:
+      tags: [Departments]
+      summary: Update a department (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string }
+                description: { type: string }
+                isActive: { type: boolean }
+      responses:
+        '200': { description: Updated. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /users:
+    get:
+      tags: [Users & Workers]
+      summary: List user accounts (admin)
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/Role' }
+        - name: isActive
+          in: query
+          schema: { type: string, enum: ['true', 'false'] }
+        - name: search
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: A page of users. Password hashes are never included. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Users & Workers]
+      summary: Create a staff account (admin)
+      description: The only way to create a `WORKER` or `ADMIN`; registration always yields a citizen.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, role]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12 }
+                role: { type: string, enum: [WORKER, ADMIN] }
+                phone: { type: string }
+                departmentId: { type: integer, nullable: true }
+      responses:
+        '201': { description: Created. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: '`EMAIL_ALREADY_REGISTERED`' }
+
+  /users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Users & Workers]
+      summary: User detail (admin)
+      responses:
+        '200': { description: The user. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /users/{id}/status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Users & Workers]
+      summary: Activate or deactivate an account (admin)
+      description: |
+        Deactivating revokes every session immediately. An admin cannot
+        deactivate their own account, which would be an easy way to lock the
+        municipality out of its own system.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isActive]
+              properties:
+                isActive: { type: boolean }
+      responses:
+        '200': { description: Updated. }
+        '400': { description: '`CANNOT_TARGET_SELF`' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /users/{id}/role:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Users & Workers]
+      summary: Change a role (admin)
+      description: Refuses to demote the last remaining administrator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: '#/components/schemas/Role' }
+      responses:
+        '200': { description: Role changed and all sessions revoked. }
+        '400': { description: '`CANNOT_TARGET_SELF`' }
+        '409': { description: '`LAST_ADMIN`' }
+
+  /workers:
+    get:
+      tags: [Users & Workers]
+      summary: Worker directory (admin, worker)
+      description: |
+        Ordered by current workload so an admin can assign to whoever is
+        freest. Contact details are included for admins only.
+      responses:
+        '200': { description: Workers with open, in-progress and resolved counts. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /workers/{id}/issues:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Users & Workers]
+      summary: A worker's queue
+      description: A worker may only read their own queue; anyone else's returns `404`.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: A page of issues. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List your notifications
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: unreadOnly
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200': { description: A page of notifications, newest first. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Unread badge count
+      responses:
+        '200':
+          description: The count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      count: { type: integer }
+
+  /notifications/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Notifications]
+      summary: Mark one notification read
+      description: Scoped to the caller; another user's id returns `404`.
+      responses:
+        '200': { description: Marked read. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /notifications/read-all:
+    patch:
+      tags: [Notifications]
+      summary: Mark everything read
+      responses:
+        '200':
+          description: Number of rows updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      updated: { type: integer }
+
+  /analytics/overview:
+    get:
+      tags: [Analytics]
+      summary: Headline statistics
+      description: |
+        Scoped to the caller: a citizen sees figures for their own reports, a
+        worker for their assignments, an admin for the whole municipality.
+        Every number is computed by SQL aggregation over live rows.
+      responses:
+        '200':
+          description: Overview statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      stats: { $ref: '#/components/schemas/OverviewStats' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /analytics/issues-by-category:
+    get:
+      tags: [Analytics]
+      summary: Breakdown by category
+      description: Categories with no reports are omitted rather than padded with zeros.
+      responses:
+        '200': { description: Per-category totals and average resolution time. }
+
+  /analytics/issues-by-status:
+    get:
+      tags: [Analytics]
+      summary: Breakdown by status
+      responses:
+        '200': { description: '`{ status, count }` for each status present.' }
+
+  /analytics/issues-by-severity:
+    get:
+      tags: [Analytics]
+      summary: Breakdown by official priority
+      responses:
+        '200': { description: '`{ priority, count }`.' }
+
+  /analytics/issues-over-time:
+    get:
+      tags: [Analytics]
+      summary: Daily reported and resolved counts
+      description: A dense series with one point per day — quiet days appear as zero, not as a gap.
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 7, maximum: 365, default: 30 }
+      responses:
+        '200': { description: The series. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /analytics/worker-workload:
+    get:
+      tags: [Analytics]
+      summary: Per-worker workload (admin)
+      responses:
+        '200': { description: Open, in-progress and resolved counts per worker. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/hotspots:
+    get:
+      tags: [Analytics]
+      summary: Geographic clusters (admin)
+      description: Coordinates rounded to two decimal places (~1.1 km cells) and grouped.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        '200': { description: Cells with a count and the dominant category. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/export:
+    get:
+      tags: [Analytics]
+      summary: Export issues as CSV (admin)
+      description: |
+        Every cell beginning `=`, `+`, `-` or `@` is prefixed with an apostrophe
+        so a spreadsheet cannot be tricked into executing it. The export is
+        recorded in the audit log as `DATA_EXPORTED`.
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: CSV attachment.
+          content:
+            text/csv:
+              schema: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /audit-logs:
+    get:
+      tags: [Audit]
+      summary: Read the audit trail (admin)
+      description: |
+        Append-only. Entries are never edited or deleted, and the actor
+        reference is `ON DELETE SET NULL` so removing a user cannot erase the
+        history of what they did.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: entityType
+          in: query
+          schema: { type: string }
+        - name: entityId
+          in: query
+          schema: { type: string }
+        - name: actorId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200': { description: A page of audit entries. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /audit-logs/actions:
+    get:
+      tags: [Audit]
+      summary: Distinct action names (admin)
+      description: Populates the filter dropdown from real data rather than a hardcoded list.
+      responses:
+        '200': { description: Action names in use. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: civic_access
+      description: HttpOnly JWT access cookie, issued by `/auth/login`.
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Echo of the `civic_csrf` cookie. Required on every unsafe method.
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      description: Values above the maximum are rejected, not clamped.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    IssueId:
+      name: id
+      in: path
+      required: true
+      description: The issue UUID.
+      schema: { type: string, format: uuid }
+
+  responses:
+    ValidationError:
+      description: '`VALIDATION_ERROR` — `details` lists every offending field at once.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: The submitted data is invalid
+              details:
+                - field: title
+                  message: Title must be at least 8 characters
+                - field: latitude
+                  message: Latitude must be between -90 and 90
+              requestId: 8f14e45f-ceea-467a-9f6b-1d2b3c4d5e6f
+    Unauthenticated:
+      description: '`UNAUTHENTICATED` — no valid session cookie.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: '`FORBIDDEN` — authenticated but not permitted.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: |
+        Not found — **or** found but not visible to this caller. The two are
+        deliberately indistinguishable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: '`RATE_LIMITED`'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Role:
+      type: string
+      enum: [CITIZEN, WORKER, ADMIN]
+
+    Severity:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+
+    IssueStatus:
+      type: string
+      enum:
+        - REPORTED
+        - UNDER_REVIEW
+        - ASSIGNED
+        - IN_PROGRESS
+        - ON_HOLD
+        - RESOLVED
+        - CLOSED
+        - REJECTED
+        - REOPENED
+
+    HealthResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        data:
+          type: object
+          properties:
+            status: { type: string, example: ok }
+
+    Error:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+            requestId:
+              type: string
+              description: Correlates the response with the server log entry.
+
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string, nullable: true }
+        role: { $ref: '#/components/schemas/Role' }
+        isActive: { type: boolean }
+        departmentId: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    AuthResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        data:
+          type: object
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+
+    Category:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string, nullable: true }
+        icon: { type: string, nullable: true }
+        defaultSeverity: { $ref: '#/components/schemas/Severity' }
+        slaHours: { type: integer }
+        isActive: { type: boolean }
+
+    Issue:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        publicId:
+          type: string
+          example: CIV-2026-000123
+          description: Human-quotable reference printed on receipts and notices.
+        title: { type: string }
+        description: { type: string }
+        status: { $ref: '#/components/schemas/IssueStatus' }
+        citizenSeverity:
+          allOf: [{ $ref: '#/components/schemas/Severity' }]
+          description: What the reporter selected.
+        officialPriority:
+          allOf: [{ $ref: '#/components/schemas/Severity' }]
+          description: What the municipality decided, calculated then optionally overridden.
+        categoryId: { type: integer }
+        categoryName: { type: string }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        addressText: { type: string, nullable: true }
+        landmark: { type: string, nullable: true }
+        isPublic: { type: boolean }
+        isSpam: { type: boolean }
+        reporterId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Omitted for public viewers.
+        reporterName: { type: string, nullable: true }
+        assignedWorkerId: { type: string, format: uuid, nullable: true }
+        assignedWorkerName: { type: string, nullable: true }
+        commentCount: { type: integer }
+        imageCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+        closedAt: { type: string, format: date-time, nullable: true }
+
+    PaginatedIssues:
+      type: object
+      properties:
+        success: { type: boolean }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Issue' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    IssueImage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [ORIGINAL, ADDITIONAL, RESOLUTION] }
+        mimeType: { type: string }
+        sizeBytes: { type: integer }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+        uploadedById: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        url:
+          type: string
+          description: Controlled download route; never a direct filesystem path.
+
+    IssueComment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        body: { type: string }
+        isInternal: { type: boolean }
+        authorId: { type: string, format: uuid, nullable: true }
+        authorName: { type: string, nullable: true }
+        authorRole: { $ref: '#/components/schemas/Role' }
+        createdAt: { type: string, format: date-time }
+
+    StatusHistoryEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        previousStatus:
+          allOf: [{ $ref: '#/components/schemas/IssueStatus' }]
+          nullable: true
+        newStatus: { $ref: '#/components/schemas/IssueStatus' }
+        reason: { type: string, nullable: true }
+        changedById: { type: string, format: uuid, nullable: true }
+        changedByName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    Assignment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workerId: { type: string, format: uuid }
+        workerName: { type: string }
+        assignedById: { type: string, format: uuid, nullable: true }
+        note: { type: string, nullable: true }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    IssueDetail:
+      type: object
+      properties:
+        success: { type: boolean }
+        data:
+          type: object
+          properties:
+            issue: { $ref: '#/components/schemas/Issue' }
+            images:
+              type: array
+              items: { $ref: '#/components/schemas/IssueImage' }
+            comments:
+              type: array
+              items: { $ref: '#/components/schemas/IssueComment' }
+            history:
+              type: array
+              items: { $ref: '#/components/schemas/StatusHistoryEntry' }
+            assignments:
+              type: array
+              items: { $ref: '#/components/schemas/Assignment' }
+            allowedTransitions:
+              type: array
+              description: Exactly the transitions this caller may perform, so the UI renders no button that would fail.
+              items: { $ref: '#/components/schemas/IssueStatus' }
+            access:
+              type: string
+              enum: [ADMIN, OWNER, ASSIGNED_WORKER, PUBLIC_VIEWER]
+
+    DuplicateCandidate:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        publicId: { type: string }
+        title: { type: string }
+        status: { $ref: '#/components/schemas/IssueStatus' }
+        distanceMeters: { type: number, format: double }
+        createdAt: { type: string, format: date-time }
+
+    OverviewStats:
+      type: object
+      properties:
+        total: { type: integer }
+        open: { type: integer }
+        reported: { type: integer }
+        underReview: { type: integer }
+        assigned: { type: integer }
+        inProgress: { type: integer }
+        onHold: { type: integer }
+        resolved: { type: integer }
+        closed: { type: integer }
+        rejected: { type: integer }
+        reopened: { type: integer }
+        critical: { type: integer }
+        newLast7Days: { type: integer }
+        resolvedLast7Days: { type: integer }
+        averageResolutionHours: { type: number, nullable: true }
+        medianResolutionHours: { type: number, nullable: true }

@@ -1,0 +1,16 @@
+# Build context is the repo root for the API image (it needs docs/ too).
+node_modules
+**/node_modules
+**/dist
+**/coverage
+**/var
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+.git
+.github
+client
+scripts
+server/tests
+**/.eslintcache

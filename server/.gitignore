@@ -1,0 +1,21 @@
+# Secrets. The real .env holds DATABASE_URL, JWT_SECRET and cookie secrets;
+# it must never be committed. Commit .env.example (placeholders) instead.
+.env
+.env.local
+.env.production
+.env.*.local
+!.env.example
+
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Locally stored uploads (outside the web root, served only via the
+# authorising download route).
+var/
+var/uploads/
+
+logs/
+*.log
+coverage/
+.nyc_output/
