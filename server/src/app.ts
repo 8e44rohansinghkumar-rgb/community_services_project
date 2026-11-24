@@ -99,6 +99,22 @@ export function createApp(): Express {
   // Applies to every state-changing request across the whole API.
   app.use(csrfProtection);
 
+  app.get('/', (_req, res) => {
+    res.json({
+      success: true,
+      data: {
+        name: 'Civic Connect API',
+        status: 'running',
+        docs: '/docs',
+        health: '/api/health',
+      },
+    });
+  });
+
+  app.get('/favicon.ico', (_req, res) => {
+    res.status(204).end();
+  });
+
   app.use('/api', apiRouter);
 
   // Interactive documentation. Mounted after the API so it can never shadow a
