@@ -35,10 +35,13 @@ export const docsRouter = Router();
  * code works in all three without an extra environment variable.
  */
 const SPEC_CANDIDATES = [
+  process.env.OPENAPI_SPEC_PATH,
   path.resolve(__dirname, '../../../docs/openapi.yaml'),
   path.resolve(__dirname, '../../docs/openapi.yaml'),
+  path.resolve(process.cwd(), '../docs/openapi.yaml'),
+  path.resolve(process.cwd(), 'docs/openapi.yaml'),
   '/docs/openapi.yaml',
-];
+].filter(Boolean) as string[];
 
 function resolveSpecPath(): string | null {
   return SPEC_CANDIDATES.find((candidate) => fs.existsSync(candidate)) ?? null;

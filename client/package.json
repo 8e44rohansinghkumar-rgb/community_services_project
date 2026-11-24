@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Smart Civic Issue Reporting and Resolution System - web client",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

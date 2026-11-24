@@ -7,11 +7,30 @@
  * processes migrating at once (e.g. two app instances booting together).
  */
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { pool } from './pool';
 import { logger } from '../utils/logger';
 
-const MIGRATIONS_DIR = path.resolve(process.cwd(), '../database/migrations');
+const MIGRATION_CANDIDATES = [
+  process.env.MIGRATIONS_DIR,
+  path.resolve(process.cwd(), '../database/migrations'),
+  path.resolve(process.cwd(), 'database/migrations'),
+  path.resolve(__dirname, '../../../database/migrations'),
+  path.resolve(__dirname, '../../database/migrations'),
+  '/database/migrations',
+].filter(Boolean) as string[];
+
+function resolveMigrationsDir(): string {
+  for (const candidate of MIGRATION_CANDIDATES) {
+    if (fsSync.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return path.resolve(process.cwd(), '../database/migrations');
+}
+
+const MIGRATIONS_DIR = resolveMigrationsDir();
 const ADVISORY_LOCK_KEY = 4711_2026;
 
 export interface MigrationFile {

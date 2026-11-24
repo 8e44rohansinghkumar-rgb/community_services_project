@@ -24,7 +24,7 @@ export const pool = new Pool({
   max: config.DATABASE_POOL_MAX,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
-  ssl: config.DATABASE_SSL ? { rejectUnauthorized: true } : undefined,
+  ssl: config.DATABASE_SSL ? { rejectUnauthorized: false } : undefined,
   application_name: 'civic-api',
 });
 
