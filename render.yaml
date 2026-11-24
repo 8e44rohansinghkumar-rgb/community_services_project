@@ -14,7 +14,7 @@ services:
     region: oregon
     plan: free
     rootDir: server
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: node dist/server.js
     healthCheckPath: /api/health/ready
     envVars:
@@ -66,7 +66,7 @@ services:
     name: civic-connect
     runtime: static
     rootDir: client
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     staticPublishPath: dist
     routes:
       - type: rewrite
